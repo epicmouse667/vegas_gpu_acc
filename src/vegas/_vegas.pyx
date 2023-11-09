@@ -792,7 +792,7 @@ cdef class AdaptiveMap:
         if nproc > 1:
             pool = multiprocessing.Pool(processes=nproc)
             for i in range(nitn):
-                self._add_training_data(x, f, fx, nproc, pool)
+                self.gpu_add_training_data(x, f, fx, nproc, pool)
                 self.adapt(alpha=alpha, ninc=tmp_ninc)
             pool.close()
             pool.join()       
@@ -823,33 +823,36 @@ cdef class AdaptiveMap:
         self.n_f = numpy.sum([resi[1] for resi in res], axis=0) + TINY
     
     # gpu accelerated version of func add_training_data
-    def gpu_add_training_data(self,map_obj, x, fx, nproc):
+    def gpu_add_training_data(self, x, fx):
         # You need to determine the appropriate size for your blocks and grid
-        threads_per_block = 128  # This is an example value
+        threads_per_block = 256  # This is an example value
         # blocks_per_grid = (x.shape[0] + (threads_per_block - 1)) // threads_per_block  
         bocks_per_grid = 10 # This is an example value
         nx = x.shape[0]//(threads_per_block * blocks_per_id)
-        res = gpu_collect_training_data[blocks_per_grid,threads_per_block](self,x,fx,nx)
-        self.sum_f = numpy.sum([resi[0] for resi in res], axis=0)
-        self.n_f = numpy.sum([resi[1] for resi in res], axis=0) + TINY
+        global_sum_f = []
+        global_n_f = []
+        gpu_collect_training_data[blocks_per_grid,threads_per_block](self,x,fx,nx,global_sum_f,global_n_f)
+        self.sum_f = numpy.sum([x for x in global_sum_f], axis=0)
+        self.n_f = numpy.sum([x for x in global_n_f], axis=0) + TINY
     
     # gpu accelerated version of _collect_training_data
     @cuda.jit
-    def gpu_collect_training_data(map,x,fx):
+    def gpu_collect_training_data(map,x,fx,global_sum_f,global_n_f):
         i = cuda.grid(1)
         if((i+1) * nx < x.shape[0]):
             x_tmp = x[i*nx:(i+1)*nx]
             fx_tmp = fx[i*nx:(i+1)*nx]
         #boundary scenario
         else:
-            x_tmp = x[i*nx]
-            fx_tmp = fx[i*nx]
+            x_tmp = x[i*nx:]
+            fx_tmp = fx[i*nx:]
         map.clear()
         y = numpy.empty(x_tmp.shape, float)
         jac = numpy.empty(x_tmp.shape[0], float)
         map.invmap(x_tmp, y, jac)
         map.add_training_data(y, (fx_tmp * jac)**2)
-        return (numpy.asarray(map.sum_f), numpy.asarray(map.n_f))
+        global_sum_f[idx] = numpy.asarray(map.sum_f)
+        global_n_f[idx] = numpy.asarray(map.n_f)
 
 
     @staticmethod
