@@ -829,9 +829,11 @@ cdef class AdaptiveMap:
         # blocks_per_grid = (x.shape[0] + (threads_per_block - 1)) // threads_per_block  
         bocks_per_grid = 10 # This is an example value
         nx = x.shape[0]//(threads_per_block * blocks_per_id)
-        global_sum_f = []
-        global_n_f = []
-        gpu_collect_training_data[blocks_per_grid,threads_per_block](self,x,fx,nx,global_sum_f,global_n_f)
+        x_device = cuda.to_device(x)
+        fx_device = cuda.to_device(fx)
+        global_sum_f = cuda.device_array(shape=(x.shape[0],), dtype=np.float32)
+        global_n_f = cuda.device_array(shape=(x.shape[0],), dtype=np.float32)
+        gpu_collect_training_data[blocks_per_grid,threads_per_block](self,x_device,fx_device,nx,global_sum_f,global_n_f)
         self.sum_f = numpy.sum([x for x in global_sum_f], axis=0)
         self.n_f = numpy.sum([x for x in global_n_f], axis=0) + TINY
     
