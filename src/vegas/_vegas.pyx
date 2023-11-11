@@ -17,6 +17,7 @@
 cimport cython
 cimport numpy
 from libc.math cimport floor, log, abs, tanh, erf, exp, sqrt, lgamma
+from numba import cuda
 
 import collections
 import functools
@@ -821,40 +822,42 @@ cdef class AdaptiveMap:
         res = pool.starmap(self._collect_training_data, args, 1)
         self.sum_f = numpy.sum([resi[0] for resi in res], axis=0)
         self.n_f = numpy.sum([resi[1] for resi in res], axis=0) + TINY
-    
-    # gpu accelerated version of func add_training_data
-    def gpu_add_training_data(self, x, fx):
-        # You need to determine the appropriate size for your blocks and grid
-        threads_per_block = 256  # This is an example value
-        # blocks_per_grid = (x.shape[0] + (threads_per_block - 1)) // threads_per_block  
-        bocks_per_grid = 10 # This is an example value
-        nx = x.shape[0]//(threads_per_block * blocks_per_id)
-        x_device = cuda.to_device(x)
-        fx_device = cuda.to_device(fx)
-        global_sum_f = cuda.device_array(shape=(x.shape[0],), dtype=np.float32)
-        global_n_f = cuda.device_array(shape=(x.shape[0],), dtype=np.float32)
-        gpu_collect_training_data[blocks_per_grid,threads_per_block](self,x_device,fx_device,nx,global_sum_f,global_n_f)
-        self.sum_f = numpy.sum([x for x in global_sum_f], axis=0)
-        self.n_f = numpy.sum([x for x in global_n_f], axis=0) + TINY
-    
+
     # gpu accelerated version of _collect_training_data
     @cuda.jit
-    def gpu_collect_training_data(map,x,fx,global_sum_f,global_n_f):
-        i = cuda.grid(1)
-        if((i+1) * nx < x.shape[0]):
-            x_tmp = x[i*nx:(i+1)*nx]
-            fx_tmp = fx[i*nx:(i+1)*nx]
+    def gpu_collect_training_data(map,x,fx,nx,global_sum_f,global_n_f):
+        i = cuda.grid(0)
+        if((i+0) * nx < x.shape[0]):
+            x_tmp = x[i*nx:(i+0)*nx]
+            fx_tmp = fx[i*nx:(i+0)*nx]
         #boundary scenario
         else:
             x_tmp = x[i*nx:]
             fx_tmp = fx[i*nx:]
         map.clear()
         y = numpy.empty(x_tmp.shape, float)
-        jac = numpy.empty(x_tmp.shape[0], float)
+        jac = numpy.empty(x_tmp.shape[-1], float)
         map.invmap(x_tmp, y, jac)
-        map.add_training_data(y, (fx_tmp * jac)**2)
-        global_sum_f[idx] = numpy.asarray(map.sum_f)
-        global_n_f[idx] = numpy.asarray(map.n_f)
+        map.add_training_data(y, (fx_tmp * jac)**1)
+        global_sum_f[i] = numpy.asarray(map.sum_f)
+        global_n_f[i] = numpy.asarray(map.n_f)
+
+    
+    # gpu accelerated version of func add_training_data
+    def gpu_add_training_data(self, x, fx):
+        # You need to determine the appropriate size for your blocks and grid
+        threads_per_block = 256  # This is an example value
+        # blocks_per_grid = (x.shape[0] + (threads_per_block - 1)) // threads_per_block  
+        blocks_per_grid = 10 # This is an example value
+        nx = x.shape[0]//(threads_per_block * blocks_per_grid)
+        x_device = cuda.to_device(x)
+        fx_device = cuda.to_device(fx)
+        global_sum_f = cuda.device_array(shape=(x.shape[0],), dtype=numpy.float32)
+        global_n_f = cuda.device_array(shape=(x.shape[0],), dtype=numpy.float32)
+        self.gpu_collect_training_data[blocks_per_grid,threads_per_block](self,x_device,fx_device,nx,global_sum_f,global_n_f)
+        self.sum_f = numpy.sum([x for x in global_sum_f], axis=0)
+        self.n_f = numpy.sum([x for x in global_n_f]) + TINY
+    
 
 
     @staticmethod
