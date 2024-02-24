@@ -30,6 +30,7 @@ import sys
 import tempfile
 import time
 import warnings
+import torch
 
 import numpy
 import gvar
@@ -1129,6 +1130,7 @@ cdef class Integrator(object):
         mpi=True,               # allow MPI?
         uses_jac=False,         # return Jacobian to integrand?
         nproc=1,                # number of processors to use
+        use_gpu=True,
         )
 
     def __init__(Integrator self not None, map, **kargs):
@@ -1138,6 +1140,7 @@ cdef class Integrator(object):
         self.last_neval = 0
         self.pool = None
         self.sigf_h5 = None
+        self.use_gpu=True
         if isinstance(map, Integrator):
             args = {}
             for k in Integrator.defaults:
@@ -1825,7 +1828,29 @@ cdef class Integrator(object):
                 fdv2 = self.fdv2        # must be inside loop
 
                 # evaluate integrand at all points in x
-                if self.nproc > 1:
+                if self.use_gpu:
+                    # threads_per_block = 16
+                    # blocks_per_grid =  16
+                    # nx = x.shape[0]//(threads_per_block * blocks_per_grid)
+                    # x_device = cuda.to_device(x)
+                    # jac=None
+                    # if self.uses_jac:
+                    #     jac = self.map.jac1d(y)
+                    # jac_device = cuda.to_device(jac)
+                    # results = cuda.device_array(shape=(x.shape[0],x.shape[1]), dtype=numpy.float32)
+                    # print("call eval_gpu_call")
+                    # gpu_call[blocks_per_grid,threads_per_block](x_device,jac_device,results,nx,fcn.eval.fcn)
+                    # fx = results
+                    jac=None
+                    jac_device=None
+                    if self.uses_jac:
+                        jac = self.map.jac1d(y)
+                        jac_device = torch.tensor(jac,dtype=torch.float32).to("cuda")
+                    x_device = torch.tensor(x,dtype=torch.double).to("cuda")
+                    
+                    fx = fcn.eval(x_device,jac_device)
+                    
+                elif self.nproc > 1 and not self.use_gpu:
                     nx = x.shape[0] // self.nproc + 1
                     if self.uses_jac:
                         jac = self.map.jac1d(y)
@@ -2725,7 +2750,7 @@ cdef class VegasIntegrand:
                 self.size = self.bdict.size
                 _eval = _BatchIntegrand_from_BatchDict(fcn, self.bdict, rbatch=False)
             else:
-                fx = numpy.asarray(fx)
+                # fx = numpy.asarray(fx)
                 self.shape = fx.shape[1:]
                 self.size = numpy.prod(self.shape, dtype=type(self.size))
                 _eval = _BatchIntegrand_from_Batch(fcn, rbatch=False) 
@@ -2825,7 +2850,7 @@ cdef class _BatchIntegrand_from_Batch(object):
         self.fcn = fcn
         self.rbatch = rbatch
 
-    def __call__(self, numpy.ndarray[numpy.double_t, ndim=2] x, jac):
+    def __call__(self, x, jac):
         # if x.shape[0] <= 0:
         #     return numpy.empty((0,) + self.shape, float)
         if self.rbatch:
@@ -2836,9 +2861,27 @@ cdef class _BatchIntegrand_from_Batch(object):
             return numpy.ascontiguousarray(fx.T)
         else:
             fx = self.fcn(x) if jac is None else self.fcn(x, jac=jac)
-            if not isinstance(fx, numpy.ndarray):
-                fx = numpy.asarray(fx)
+            # if not isinstance(fx, numpy.ndarray):
+            #     fx = numpy.asarray(fx)
+            fx=fx.detach().cpu().numpy()
             return fx.reshape((x.shape[0], -1))
+
+@cuda.jit
+def gpu_call( x,jac,results,nx,fcn):
+    i=cuda.grid(1)
+    x=x[i,:]
+    jac=jac[i,:]
+    # if self.rbatch:
+    #     fx = self.fcn(x.T) if jac is None else self.fcn(x.T, jac=jac.T)
+    #     if not isinstance(fx, numpy.ndarray):
+    #         fx = numpy.asarray(fx)
+    #     fx = fx.reshape((-1, x.shape[0]))
+    #     # return numpy.ascontiguousarray(fx.T)
+    # else:
+    fx = fcn(x) if jac is None else fcn(x, jac=jac)
+    if not isinstance(fx, numpy.ndarray):
+        fx = numpy.asarray(fx)
+    results[i]=fx.copy()
 
 
 cdef class _BatchIntegrand_from_BatchDict(object):

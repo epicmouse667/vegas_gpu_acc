@@ -13,8 +13,32 @@ from __future__ import print_function   # makes this work for python2 and 3
 import vegas
 import math
 import numpy as np
+import torch
 
 np.random.seed((1,2,3))   # causes reproducible random numbers
+
+# @vegas.batchintegrand
+# class f_batch:
+#     def __init__(self, dim):
+#         self.dim = dim
+#         self.norm_ac = 1. / 0.17720931990702889842 ** dim
+#         self.norm_b = 1. / 0.17724538509027909508 ** dim
+        
+#     def __call__(self, x):
+#         dx2a = 0
+#         for d in range(self.dim):
+#             dx2a += (x[:, d] - 0.25) ** 2
+#         dx2b = 0
+#         for d in range(self.dim):
+#             dx2b += (x[:, d] - 0.5) ** 2
+#         dx2c = 0
+#         for d in range(self.dim):
+#             dx2c += (x[:, d] - 0.75) ** 2
+#         return (
+#             np.exp(- 100. * dx2a) * self.norm_ac
+#             + np.exp(-100. * dx2b) * self.norm_b
+#             + np.exp(-100. * dx2c) * self.norm_ac
+#             ) / 3.
 
 @vegas.batchintegrand
 class f_batch:
@@ -25,6 +49,7 @@ class f_batch:
         
     def __call__(self, x):
         dx2a = 0
+        x=torch.tensor(x,dtype=torch.double).to("cuda")
         for d in range(self.dim):
             dx2a += (x[:, d] - 0.25) ** 2
         dx2b = 0
@@ -34,23 +59,25 @@ class f_batch:
         for d in range(self.dim):
             dx2c += (x[:, d] - 0.75) ** 2
         return (
-            np.exp(- 100. * dx2a) * self.norm_ac
-            + np.exp(-100. * dx2b) * self.norm_b
-            + np.exp(-100. * dx2c) * self.norm_ac
+            torch.exp(- 100. * dx2a) * self.norm_ac
+            + torch.exp(-100. *dx2b) * self.norm_b
+            + torch.exp(-100. * dx2c) * self.norm_ac
             ) / 3.
+
+
 
 def main():
     # create integrand
-    f = f_batch(dim=6)
+    f = f_batch(dim=50)
 
     integ = vegas.Integrator(f.dim * [[0, 1]])
 
     # adapt the grid; discard these results
-    integ(f, neval=2500000, nitn=10)
+    integ(f, neval=250000, nitn=10)
 
     # final result; slow down adaptation because
     # already adapted, so increases stability
-    result = integ(f, neval=2500000, nitn=10, alpha=0.1)
+    result = integ(f, neval=25000, nitn=10, alpha=0.1)
 
     print(result.summary())
 

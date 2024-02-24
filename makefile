@@ -11,7 +11,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-PYTHON = python
+PYTHON = python3
 PIP = $(PYTHON) -m pip
 PYTHONVERSION = python`$(PYTHON) -c 'import platform; print(platform.python_version())'`
 VERSION = `$(PYTHON) -c 'import vegas; print (vegas.__version__)'`

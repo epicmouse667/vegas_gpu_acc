@@ -62,6 +62,7 @@ cdef class Integrator:
     cdef public str save 
     cdef public str saveall
     cdef readonly numpy.npy_intp[::1] nstrat
+    cdef public bint use_gpu
     # generated
     cdef readonly AdaptiveMap map
     cdef readonly object pool
@@ -79,4 +80,5 @@ cdef class Integrator:
     # the following depend upon whether minimize_mem is False or True
     cdef readonly object sigf       # numpy array or h5py Dataset
     cdef readonly object sigf_h5    # None or h5py file
+    
 
